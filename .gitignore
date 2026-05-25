@@ -6,3 +6,7 @@ src/*.db-shm
 src/*.db-wal
 .DS_Store
 .env
+src/epusdt.exe
+src/epusdt.exe~
+src/cmd/
+src/www/assets/__install_bundle_backup.js

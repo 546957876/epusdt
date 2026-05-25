@@ -8,5 +8,6 @@ src/*.db-wal
 .env
 src/epusdt.exe
 src/epusdt.exe~
+src/epusdt
 src/cmd/
 src/www/assets/__install_bundle_backup.js

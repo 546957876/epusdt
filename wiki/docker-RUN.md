@@ -8,7 +8,14 @@ mkdir epusdt && cd epusdt
 mkdir -p conf runtime
 ```
 
-3. 把配置文件放到 `conf/.env`
+3. 可选：先准备自定义 PostgreSQL 账号信息
+```shell
+export EPUSDT_POSTGRES_USER=gmpay
+export EPUSDT_POSTGRES_PASSWORD='gmpay123456'
+export EPUSDT_POSTGRES_DB=gmpay
+```
+
+4. 如果你想跳过安装向导，手动把配置文件放到 `conf/.env`
 
 app_url
 
@@ -34,18 +41,18 @@ log_max_age=7
 max_backups=3
 
 # supported values: postgres,mysql,sqlite
-db_type=sqlite
+db_type=postgres
 
 # sqlite primary database config
 sqlite_database_filename=
 sqlite_table_prefix=
 
 # postgres config
-postgres_host=127.0.0.1
-postgres_port=3306
-postgres_user=mysql_user
-postgres_passwd=mysql_password
-postgres_database=database_name
+postgres_host=postgres
+postgres_port=5432
+postgres_user=${EPUSDT_POSTGRES_USER}
+postgres_passwd=${EPUSDT_POSTGRES_PASSWORD}
+postgres_database=${EPUSDT_POSTGRES_DB}
 postgres_table_prefix=
 postgres_max_idle_conns=10
 postgres_max_open_conns=100
@@ -82,30 +89,76 @@ api_rate_url=https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/cu
 tron_grid_api_key=
 EOF
 ```
-4. docker compose 创建
+5. docker compose 创建
 ```shell
 cat <<EOF > docker-compose.yaml
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: \${EPUSDT_POSTGRES_USER:-gmpay}
+      POSTGRES_PASSWORD: \${EPUSDT_POSTGRES_PASSWORD:-gmpay123456}
+      POSTGRES_DB: \${EPUSDT_POSTGRES_DB:-gmpay}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \${EPUSDT_POSTGRES_USER:-gmpay} -d \${EPUSDT_POSTGRES_DB:-gmpay}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   epusdt:
     image: gmwallet/epusdt:latest
     restart: always
     build:
       context: .
       dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       EPUSDT_CONFIG: /app/conf/.env
       EPUSDT_DOCKER: "1"
+      EPUSDT_POSTGRES_HOST: postgres
+      EPUSDT_POSTGRES_PORT: "5432"
+      EPUSDT_POSTGRES_USER: \${EPUSDT_POSTGRES_USER:-gmpay}
+      EPUSDT_POSTGRES_PASSWORD: \${EPUSDT_POSTGRES_PASSWORD:-gmpay123456}
+      EPUSDT_POSTGRES_DB: \${EPUSDT_POSTGRES_DB:-gmpay}
     volumes:
       - ./conf:/app/conf
       - ./runtime:/app/runtime
     ports:
       - "8000:8000"
+
+volumes:
+  postgres_data:
 EOF
 ```
-5. 运行
+6. 运行
 ```shell
 docker compose up -d
 ```
-6. 配置独角兽后台
+7. 如果你走安装向导，数据库相关这样填
+
+- 数据库类型：`PostgreSQL`
+- `postgres_host`：`postgres`
+- `postgres_port`：`5432`
+- 用户名 / 密码 / 数据库名：和 Compose 里的变量保持一致
+
+⚠️ **Docker 环境下不要填写 `127.0.0.1` 或 `localhost`**
+
+因为在容器里：
+
+- `127.0.0.1` 指向的是 `epusdt` 容器自己
+- 不是 PostgreSQL 容器
+
+所以 Docker Compose 内置 PostgreSQL 时，主机名必须填写：
+
+```text
+postgres
+```
+
+8. 配置独角兽后台
 
 商户密钥： http://your_domain/payments/epusdt/v1/order/create-transaction

@@ -31,18 +31,56 @@ func TestInstallDefaults(t *testing.T) {
 
 func TestInstallDefaultsDockerOverrides(t *testing.T) {
 	oldDocker := os.Getenv("EPUSDT_DOCKER")
+	oldHost := os.Getenv("EPUSDT_POSTGRES_HOST")
+	oldPort := os.Getenv("EPUSDT_POSTGRES_PORT")
+	oldUser := os.Getenv("EPUSDT_POSTGRES_USER")
+	oldPass := os.Getenv("EPUSDT_POSTGRES_PASSWORD")
+	oldDB := os.Getenv("EPUSDT_POSTGRES_DB")
 	defer func() {
 		if oldDocker == "" {
 			_ = os.Unsetenv("EPUSDT_DOCKER")
 		} else {
 			_ = os.Setenv("EPUSDT_DOCKER", oldDocker)
 		}
+		if oldHost == "" {
+			_ = os.Unsetenv("EPUSDT_POSTGRES_HOST")
+		} else {
+			_ = os.Setenv("EPUSDT_POSTGRES_HOST", oldHost)
+		}
+		if oldPort == "" {
+			_ = os.Unsetenv("EPUSDT_POSTGRES_PORT")
+		} else {
+			_ = os.Setenv("EPUSDT_POSTGRES_PORT", oldPort)
+		}
+		if oldUser == "" {
+			_ = os.Unsetenv("EPUSDT_POSTGRES_USER")
+		} else {
+			_ = os.Setenv("EPUSDT_POSTGRES_USER", oldUser)
+		}
+		if oldPass == "" {
+			_ = os.Unsetenv("EPUSDT_POSTGRES_PASSWORD")
+		} else {
+			_ = os.Setenv("EPUSDT_POSTGRES_PASSWORD", oldPass)
+		}
+		if oldDB == "" {
+			_ = os.Unsetenv("EPUSDT_POSTGRES_DB")
+		} else {
+			_ = os.Setenv("EPUSDT_POSTGRES_DB", oldDB)
+		}
 	}()
 	if err := os.Setenv("EPUSDT_DOCKER", "1"); err != nil {
 		t.Fatalf("set EPUSDT_DOCKER: %v", err)
 	}
+	_ = os.Setenv("EPUSDT_POSTGRES_HOST", "postgres")
+	_ = os.Setenv("EPUSDT_POSTGRES_PORT", "5432")
+	_ = os.Setenv("EPUSDT_POSTGRES_USER", "gmpay")
+	_ = os.Setenv("EPUSDT_POSTGRES_PASSWORD", "gmpay123456")
+	_ = os.Setenv("EPUSDT_POSTGRES_DB", "gmpay")
 
 	d := InstallDefaults()
+	if d.DBType != "postgres" {
+		t.Errorf("DBType = %q, want postgres", d.DBType)
+	}
 	if d.HttpBindAddr != "0.0.0.0" {
 		t.Errorf("HttpBindAddr = %q, want 0.0.0.0", d.HttpBindAddr)
 	}
@@ -51,6 +89,21 @@ func TestInstallDefaultsDockerOverrides(t *testing.T) {
 	}
 	if d.LogSavePath != "./logs" {
 		t.Errorf("LogSavePath = %q, want ./logs", d.LogSavePath)
+	}
+	if d.PostgresHost != "postgres" {
+		t.Errorf("PostgresHost = %q, want postgres", d.PostgresHost)
+	}
+	if d.PostgresPort != "5432" {
+		t.Errorf("PostgresPort = %q, want 5432", d.PostgresPort)
+	}
+	if d.PostgresUser != "gmpay" {
+		t.Errorf("PostgresUser = %q, want gmpay", d.PostgresUser)
+	}
+	if d.PostgresPasswd != "gmpay123456" {
+		t.Errorf("PostgresPasswd = %q, want gmpay123456", d.PostgresPasswd)
+	}
+	if d.PostgresDatabase != "gmpay" {
+		t.Errorf("PostgresDatabase = %q, want gmpay", d.PostgresDatabase)
 	}
 }
 
@@ -329,6 +382,37 @@ func TestInstallAPISubmitInvalidMySQLConfig(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNormalizeInstallRequestRejectsDockerLocalPostgresHost(t *testing.T) {
+	oldDocker := os.Getenv("EPUSDT_DOCKER")
+	defer func() {
+		if oldDocker == "" {
+			_ = os.Unsetenv("EPUSDT_DOCKER")
+		} else {
+			_ = os.Setenv("EPUSDT_DOCKER", oldDocker)
+		}
+	}()
+	if err := os.Setenv("EPUSDT_DOCKER", "1"); err != nil {
+		t.Fatalf("set EPUSDT_DOCKER: %v", err)
+	}
+
+	req := &InstallRequest{
+		AppURI:           "http://example.com",
+		DBType:           "postgres",
+		PostgresHost:     "127.0.0.1",
+		PostgresPort:     "5432",
+		PostgresUser:     "gmpay",
+		PostgresDatabase: "gmpay",
+	}
+
+	err := normalizeInstallRequest(req, true)
+	if err == nil {
+		t.Fatal("expected docker-local postgres host validation error")
+	}
+	if !strings.Contains(err.Error(), "Compose 服务名 postgres") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

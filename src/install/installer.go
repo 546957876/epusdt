@@ -119,11 +119,24 @@ func InstallDefaults() InstallRequest {
 		OrderNoticeMaxRetry:    1,
 	}
 	if strings.TrimSpace(os.Getenv("EPUSDT_DOCKER")) != "" {
+		defaults.DBType = "postgres"
 		defaults.HttpBindAddr = "0.0.0.0"
 		defaults.RuntimeRootPath = "/app/runtime"
 		defaults.LogSavePath = "./logs"
+		defaults.PostgresHost = envOrDefault("EPUSDT_POSTGRES_HOST", "postgres")
+		defaults.PostgresPort = envOrDefault("EPUSDT_POSTGRES_PORT", "5432")
+		defaults.PostgresUser = envOrDefault("EPUSDT_POSTGRES_USER", "gmpay")
+		defaults.PostgresPasswd = envOrDefault("EPUSDT_POSTGRES_PASSWORD", "gmpay123456")
+		defaults.PostgresDatabase = envOrDefault("EPUSDT_POSTGRES_DB", "gmpay")
 	}
 	return defaults
+}
+
+func envOrDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 // installHandler holds the per-invocation state shared between handlers.
@@ -358,6 +371,9 @@ func normalizeInstallRequest(req *InstallRequest, requireAppURI bool) error {
 		req.MySQLPasswd = strings.TrimSpace(req.MySQLPasswd)
 		req.MySQLDatabase = strings.TrimSpace(req.MySQLDatabase)
 		req.MySQLTablePrefix = strings.TrimSpace(req.MySQLTablePrefix)
+		if isDockerLocalDatabaseHost(req.MySQLHost) {
+			return fmt.Errorf("Docker 部署下 MySQL 地址不能填写 127.0.0.1 / localhost，请填写可访问的 MySQL 主机名")
+		}
 		if req.MySQLHost == "" || req.MySQLPort == "" || req.MySQLUser == "" || req.MySQLDatabase == "" {
 			return fmt.Errorf("选择 MySQL 时，地址、端口、用户名、数据库名不能为空")
 		}
@@ -368,6 +384,9 @@ func normalizeInstallRequest(req *InstallRequest, requireAppURI bool) error {
 		req.PostgresPasswd = strings.TrimSpace(req.PostgresPasswd)
 		req.PostgresDatabase = strings.TrimSpace(req.PostgresDatabase)
 		req.PostgresTablePrefix = strings.TrimSpace(req.PostgresTablePrefix)
+		if isDockerLocalDatabaseHost(req.PostgresHost) {
+			return fmt.Errorf("Docker 部署下 PostgreSQL 地址不能填写 127.0.0.1 / localhost，请填写 Compose 服务名 postgres")
+		}
 		if req.PostgresHost == "" || req.PostgresPort == "" || req.PostgresUser == "" || req.PostgresDatabase == "" {
 			return fmt.Errorf("选择 PostgreSQL 时，地址、端口、用户名、数据库名不能为空")
 		}
@@ -399,6 +418,18 @@ func normalizeInstallRequest(req *InstallRequest, requireAppURI bool) error {
 		req.OrderNoticeMaxRetry = d.OrderNoticeMaxRetry
 	}
 	return nil
+}
+
+func isDockerLocalDatabaseHost(host string) bool {
+	if strings.TrimSpace(os.Getenv("EPUSDT_DOCKER")) == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func preparePrimaryDatabase(req *InstallRequest, configDir string, createIfMissing bool) error {

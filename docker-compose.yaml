@@ -1,15 +1,41 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${EPUSDT_POSTGRES_USER:-gmpay}
+      POSTGRES_PASSWORD: ${EPUSDT_POSTGRES_PASSWORD:-gmpay123456}
+      POSTGRES_DB: ${EPUSDT_POSTGRES_DB:-gmpay}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EPUSDT_POSTGRES_USER:-gmpay} -d ${EPUSDT_POSTGRES_DB:-gmpay}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   epusdt:
     image: gmwallet/epusdt:latest
     restart: always
     build:
       context: .
       dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       EPUSDT_CONFIG: /app/conf/.env
       EPUSDT_DOCKER: "1"
+      EPUSDT_POSTGRES_HOST: postgres
+      EPUSDT_POSTGRES_PORT: "5432"
+      EPUSDT_POSTGRES_USER: ${EPUSDT_POSTGRES_USER:-gmpay}
+      EPUSDT_POSTGRES_PASSWORD: ${EPUSDT_POSTGRES_PASSWORD:-gmpay123456}
+      EPUSDT_POSTGRES_DB: ${EPUSDT_POSTGRES_DB:-gmpay}
     volumes:
       - ./conf:/app/conf
       - ./runtime:/app/runtime
     ports:
       - "8000:8000"
+
+volumes:
+  postgres_data:

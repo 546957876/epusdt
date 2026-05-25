@@ -25,6 +25,7 @@ const (
 
 const (
 	SettingKeyJwtSecret                = "system.jwt_secret"
+	SettingKeyInitAdminUsername        = "system.init_admin_username"
 	SettingKeyInitAdminPasswordPlain   = "system.init_admin_password_plain"
 	SettingKeyInitAdminPasswordHash    = "system.init_admin_password_hash"
 	SettingKeyInitAdminPasswordFetched = "system.init_admin_password_fetched"

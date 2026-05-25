@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$ROOT_DIR/src"
+BRANCH="${UPDATE_BRANCH:-codex/install-flow-guards}"
+REMOTE="${UPDATE_REMOTE:-origin}"
+APP_NAME="${UPDATE_APP_NAME:-epusdt}"
+
+log() {
+  printf '[update] %s\n' "$*"
+}
+
+fail() {
+  printf '[update] ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+run_supervisor_restart() {
+  if command -v supervisorctl >/dev/null 2>&1; then
+    if supervisorctl status "$APP_NAME" >/dev/null 2>&1; then
+      log "restarting via supervisorctl: $APP_NAME"
+      supervisorctl restart "$APP_NAME"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+run_systemd_restart() {
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl status "$APP_NAME" >/dev/null 2>&1; then
+      log "restarting via systemctl: $APP_NAME"
+      systemctl restart "$APP_NAME"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+run_docker_restart() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    if [[ -f "$ROOT_DIR/docker-compose.yaml" || -f "$ROOT_DIR/docker-compose.yml" ]]; then
+      log "rebuilding and restarting via docker compose"
+      docker compose up -d --build
+      return 0
+    fi
+  fi
+  return 1
+}
+
+run_binary_restart() {
+  local binary="$SRC_DIR/epusdt"
+  [[ -x "$binary" ]] || fail "built binary not found: $binary"
+
+  log "restarting raw binary fallback"
+  pkill -f "$binary http start" || true
+  nohup "$binary" http start >"$SRC_DIR/run_stdout.log" 2>"$SRC_DIR/run_stderr.log" &
+}
+
+main() {
+  require_cmd git
+
+  [[ -d "$ROOT_DIR/.git" ]] || fail "not a git repository: $ROOT_DIR"
+  [[ -d "$SRC_DIR" ]] || fail "missing src directory: $SRC_DIR"
+
+  cd "$ROOT_DIR"
+
+  local current_branch
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$current_branch" != "$BRANCH" ]]; then
+    fail "current branch is '$current_branch', expected '$BRANCH'"
+  fi
+
+  if [[ -n "$(git status --porcelain)" ]]; then
+    fail "working tree is dirty; commit or stash changes before running update"
+  fi
+
+  log "fetching $REMOTE/$BRANCH"
+  git fetch "$REMOTE" "$BRANCH"
+
+  local local_sha remote_sha base_sha
+  local_sha="$(git rev-parse HEAD)"
+  remote_sha="$(git rev-parse "$REMOTE/$BRANCH")"
+  base_sha="$(git merge-base HEAD "$REMOTE/$BRANCH")"
+
+  if [[ "$local_sha" == "$remote_sha" ]]; then
+    log "already up to date"
+    exit 0
+  fi
+
+  if [[ "$local_sha" != "$base_sha" ]]; then
+    fail "local branch has diverged from $REMOTE/$BRANCH; manual review required"
+  fi
+
+  log "pulling latest code"
+  git pull --ff-only "$REMOTE" "$BRANCH"
+
+  cd "$SRC_DIR"
+  require_cmd go
+
+  log "building application"
+  go build -o epusdt .
+
+  if run_supervisor_restart; then
+    log "update complete"
+    exit 0
+  fi
+  if run_systemd_restart; then
+    log "update complete"
+    exit 0
+  fi
+  if run_docker_restart; then
+    log "update complete"
+    exit 0
+  fi
+
+  run_binary_restart
+  log "update complete"
+}
+
+main "$@"

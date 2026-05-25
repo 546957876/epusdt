@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -32,6 +33,9 @@ import (
 	"github.com/gookit/color"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // DefaultInstallAddr is the listen address used by the install API.
@@ -45,6 +49,32 @@ type InstallRequest struct {
 	AppName string `json:"app_name" form:"app_name" example:"epusdt"`
 	// Public base URL of the service, e.g. https://pay.example.com (required)
 	AppURI string `json:"app_uri" form:"app_uri" example:"https://pay.example.com"`
+	// Initial admin username created on first bootstrap (default: admin)
+	InitialAdminUsername string `json:"initial_admin_username" form:"initial_admin_username" example:"admin"`
+	// Initial admin password created on first bootstrap; when omitted a random password is generated
+	InitialAdminPassword string `json:"initial_admin_password" form:"initial_admin_password" example:"ChangeMe123!"`
+	// When true, create the primary database automatically if it does not exist.
+	CreateDatabaseIfMissing bool `json:"create_database_if_missing" form:"create_database_if_missing"`
+	// Primary business database type: sqlite, mysql, postgres
+	DBType string `json:"db_type" form:"db_type" example:"sqlite"`
+	// Optional custom SQLite filename for the primary database
+	SQLiteDatabaseFilename string `json:"sqlite_database_filename" form:"sqlite_database_filename" example:"epusdt.db"`
+	// Optional table prefix for the SQLite primary database
+	SQLiteTablePrefix string `json:"sqlite_table_prefix" form:"sqlite_table_prefix" example:""`
+	// MySQL primary database connection fields
+	MySQLHost        string `json:"mysql_host" form:"mysql_host" example:"127.0.0.1"`
+	MySQLPort        string `json:"mysql_port" form:"mysql_port" example:"3306"`
+	MySQLUser        string `json:"mysql_user" form:"mysql_user" example:"epusdt"`
+	MySQLPasswd      string `json:"mysql_passwd" form:"mysql_passwd" example:"secret"`
+	MySQLDatabase    string `json:"mysql_database" form:"mysql_database" example:"epusdt"`
+	MySQLTablePrefix string `json:"mysql_table_prefix" form:"mysql_table_prefix" example:""`
+	// PostgreSQL primary database connection fields
+	PostgresHost        string `json:"postgres_host" form:"postgres_host" example:"127.0.0.1"`
+	PostgresPort        string `json:"postgres_port" form:"postgres_port" example:"5432"`
+	PostgresUser        string `json:"postgres_user" form:"postgres_user" example:"epusdt"`
+	PostgresPasswd      string `json:"postgres_passwd" form:"postgres_passwd" example:"secret"`
+	PostgresDatabase    string `json:"postgres_database" form:"postgres_database" example:"epusdt"`
+	PostgresTablePrefix string `json:"postgres_table_prefix" form:"postgres_table_prefix" example:""`
 	// Bind address for the HTTP server (default: 127.0.0.1)
 	HttpBindAddr string `json:"http_bind_addr" form:"http_bind_addr" example:"127.0.0.1"`
 	// Bind port for the HTTP server (default: 8000)
@@ -62,14 +92,31 @@ type InstallRequest struct {
 // InstallDefaults returns sensible default values for the install form.
 func InstallDefaults() InstallRequest {
 	return InstallRequest{
-		AppName:             "epusdt",
-		AppURI:              "",
-		HttpBindAddr:        "127.0.0.1",
-		HttpBindPort:        8000,
-		RuntimeRootPath:     "./runtime",
-		LogSavePath:         "./logs",
-		OrderExpirationTime: 10,
-		OrderNoticeMaxRetry: 1,
+		AppName:                "epusdt",
+		AppURI:                 "",
+		InitialAdminUsername:   "admin",
+		InitialAdminPassword:   "",
+		DBType:                 "sqlite",
+		SQLiteDatabaseFilename: "",
+		SQLiteTablePrefix:      "",
+		MySQLHost:              "127.0.0.1",
+		MySQLPort:              "3306",
+		MySQLUser:              "gmpay",
+		MySQLPasswd:            "",
+		MySQLDatabase:          "gmpay",
+		MySQLTablePrefix:       "",
+		PostgresHost:           "127.0.0.1",
+		PostgresPort:           "5432",
+		PostgresUser:           "postgres",
+		PostgresPasswd:         "",
+		PostgresDatabase:       "gmpay",
+		PostgresTablePrefix:    "",
+		HttpBindAddr:           "127.0.0.1",
+		HttpBindPort:           8000,
+		RuntimeRootPath:        "./runtime",
+		LogSavePath:            "./logs",
+		OrderExpirationTime:    10,
+		OrderNoticeMaxRetry:    1,
 	}
 }
 
@@ -79,13 +126,45 @@ type installHandler struct {
 	done        chan struct{}
 }
 
-func installRootRedirectMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		if c.Request().Method == http.MethodGet && c.Request().URL.Path == "/" {
+func installOnlyRouteMiddleware(wwwRoot string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				return next(c)
+			}
+
+			path := req.URL.Path
+			if path == "/" {
+				return c.Redirect(http.StatusFound, "/install")
+			}
+			if path == "/install" || strings.HasPrefix(path, "/install/") {
+				return next(c)
+			}
+			if luluHttp.ShouldSkipSPAFallback(path) {
+				return next(c)
+			}
+			if isInstallStaticAssetRequest(wwwRoot, path) {
+				return next(c)
+			}
+
 			return c.Redirect(http.StatusFound, "/install")
 		}
-		return next(c)
 	}
+}
+
+func isInstallStaticAssetRequest(wwwRoot, requestPath string) bool {
+	resolvedPath, tryStat := luluHttp.ResolveSPAFilePath(wwwRoot, requestPath)
+	if !tryStat {
+		return false
+	}
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return false
+	}
+
+	return !info.IsDir()
 }
 
 func resolveInstallWWWRoot() string {
@@ -115,11 +194,14 @@ func newInstallServer(envFilePath, wwwRoot string) (*echo.Echo, *installHandler)
 
 	api.GET("/install/defaults", h.GetDefaults)
 	api.POST("/install", h.Submit)
+	api.POST("/install/test-db", h.TestDBConnection)
+	api.POST("/install/ensure-db", h.EnsureDatabase)
 
-	// Redirect browser visits on root to /install so first-run users land
-	// on the wizard directly. This must run before the static middleware,
-	// otherwise "/" is intercepted by the SPA index.html fallback.
-	e.Use(installRootRedirectMiddleware)
+	// While the install server is running, only /install, install APIs, and
+	// real static assets should be reachable. Any other browser route must
+	// be redirected back to /install so users cannot enter the login/admin
+	// SPA before initialisation completes.
+	e.Use(installOnlyRouteMiddleware(wwwRoot))
 
 	e.Use(middleware.StaticWithConfig(middleware.StaticConfig{
 		Skipper: func(c echo.Context) bool {
@@ -147,6 +229,38 @@ func newInstallServer(envFilePath, wwwRoot string) (*echo.Echo, *installHandler)
 // @Router       /api/install/defaults [get]
 func (h *installHandler) GetDefaults(c echo.Context) error {
 	return c.JSON(http.StatusOK, InstallDefaults())
+}
+
+// TestDBConnection validates the submitted database configuration and probes
+// the primary database connection without persisting any install state.
+func (h *installHandler) TestDBConnection(c echo.Context) error {
+	req := new(InstallRequest)
+	if err := c.Bind(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
+	if err := normalizeInstallRequest(req, false); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
+	if err := preparePrimaryDatabase(req, filepath.Dir(h.envFilePath), false); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"message": "database connection ok"})
+}
+
+// EnsureDatabase creates the configured primary database when supported and
+// missing, then verifies the connection.
+func (h *installHandler) EnsureDatabase(c echo.Context) error {
+	req := new(InstallRequest)
+	if err := c.Bind(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
+	if err := normalizeInstallRequest(req, false); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
+	if err := preparePrimaryDatabase(req, filepath.Dir(h.envFilePath), req.CreateDatabaseIfMissing); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"message": "database is ready"})
 }
 
 // Submit validates the install payload, writes the .env file, and signals
@@ -179,15 +293,84 @@ func (h *installHandler) Submit(c echo.Context) error {
 	if err := c.Bind(req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 	}
+	if err := normalizeInstallRequest(req, true); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
+	if err := preparePrimaryDatabase(req, filepath.Dir(h.envFilePath), true); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+	}
 
+	if err := writeEnvFile(h.envFilePath, req); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+	}
+	if err := setInstallFlagAtPath(h.envFilePath, false); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+	}
+
+	// Give the HTTP response a brief moment to flush before the install server
+	// is asked to shut down; otherwise some clients observe a 502/connection
+	// reset during the handoff to the real app server.
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		close(h.done)
+	}()
+	return c.JSON(http.StatusOK, map[string]interface{}{"message": "install complete, starting server…"})
+}
+
+func normalizeInstallRequest(req *InstallRequest, requireAppURI bool) error {
+	d := InstallDefaults()
 	req.AppURI = strings.TrimSpace(req.AppURI)
-	if req.AppURI == "" {
-		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "app_uri is required"})
+	if requireAppURI && req.AppURI == "" {
+		return fmt.Errorf("应用地址不能为空")
+	}
+	req.InitialAdminUsername = strings.ToLower(strings.TrimSpace(req.InitialAdminUsername))
+	if req.InitialAdminUsername == "" {
+		req.InitialAdminUsername = d.InitialAdminUsername
+	}
+	if len(req.InitialAdminUsername) < 3 {
+		return fmt.Errorf("初始管理员账号至少需要 3 个字符")
+	}
+	if strings.ContainsAny(req.InitialAdminUsername, " \t\r\n") {
+		return fmt.Errorf("初始管理员账号不能包含空格")
+	}
+	req.InitialAdminPassword = strings.TrimSpace(req.InitialAdminPassword)
+	if req.InitialAdminPassword != "" && len(req.InitialAdminPassword) < 6 {
+		return fmt.Errorf("初始管理员密码至少需要 6 个字符")
+	}
+	req.DBType = strings.ToLower(strings.TrimSpace(req.DBType))
+	if req.DBType == "" {
+		req.DBType = d.DBType
+	}
+	switch req.DBType {
+	case "sqlite":
+		req.SQLiteDatabaseFilename = strings.TrimSpace(req.SQLiteDatabaseFilename)
+		req.SQLiteTablePrefix = strings.TrimSpace(req.SQLiteTablePrefix)
+	case "mysql":
+		req.MySQLHost = strings.TrimSpace(req.MySQLHost)
+		req.MySQLPort = strings.TrimSpace(req.MySQLPort)
+		req.MySQLUser = strings.TrimSpace(req.MySQLUser)
+		req.MySQLPasswd = strings.TrimSpace(req.MySQLPasswd)
+		req.MySQLDatabase = strings.TrimSpace(req.MySQLDatabase)
+		req.MySQLTablePrefix = strings.TrimSpace(req.MySQLTablePrefix)
+		if req.MySQLHost == "" || req.MySQLPort == "" || req.MySQLUser == "" || req.MySQLDatabase == "" {
+			return fmt.Errorf("选择 MySQL 时，地址、端口、用户名、数据库名不能为空")
+		}
+	case "postgres":
+		req.PostgresHost = strings.TrimSpace(req.PostgresHost)
+		req.PostgresPort = strings.TrimSpace(req.PostgresPort)
+		req.PostgresUser = strings.TrimSpace(req.PostgresUser)
+		req.PostgresPasswd = strings.TrimSpace(req.PostgresPasswd)
+		req.PostgresDatabase = strings.TrimSpace(req.PostgresDatabase)
+		req.PostgresTablePrefix = strings.TrimSpace(req.PostgresTablePrefix)
+		if req.PostgresHost == "" || req.PostgresPort == "" || req.PostgresUser == "" || req.PostgresDatabase == "" {
+			return fmt.Errorf("选择 PostgreSQL 时，地址、端口、用户名、数据库名不能为空")
+		}
+	default:
+		return fmt.Errorf("数据库类型必须是 sqlite、mysql 或 postgres")
 	}
 	if req.HttpBindPort != 0 && (req.HttpBindPort < 1 || req.HttpBindPort > 65535) {
-		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "http_bind_port must be between 1 and 65535"})
+		return fmt.Errorf("端口必须在 1 到 65535 之间")
 	}
-	d := InstallDefaults()
 	if strings.TrimSpace(req.AppName) == "" {
 		req.AppName = d.AppName
 	}
@@ -209,13 +392,191 @@ func (h *installHandler) Submit(c echo.Context) error {
 	if req.OrderNoticeMaxRetry < 0 {
 		req.OrderNoticeMaxRetry = d.OrderNoticeMaxRetry
 	}
+	return nil
+}
 
-	if err := writeEnvFile(h.envFilePath, req); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+func preparePrimaryDatabase(req *InstallRequest, configDir string, createIfMissing bool) error {
+	switch req.DBType {
+	case "sqlite":
+		sqlitePath := resolvePrimarySQLitePath(configDir, req.SQLiteDatabaseFilename)
+		if err := os.MkdirAll(filepath.Dir(sqlitePath), 0o755); err != nil {
+			return fmt.Errorf("SQLite 目录不可用：%w", err)
+		}
+		info, statErr := os.Stat(sqlitePath)
+		created := false
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return fmt.Errorf("SQLite 文件路径无效：%w", statErr)
+		}
+		f, err := os.OpenFile(sqlitePath, os.O_RDWR|os.O_CREATE, 0o600)
+		if err != nil {
+			return fmt.Errorf("SQLite 文件不可用：%w", err)
+		}
+		_ = f.Close()
+		if os.IsNotExist(statErr) {
+			created = true
+		} else if info == nil {
+			created = true
+		}
+		if created {
+			_ = os.Remove(sqlitePath)
+		}
+		return nil
+	case "mysql":
+		if createIfMissing {
+			if err := ensureMySQLDatabaseExists(req); err != nil {
+				return err
+			}
+		}
+		return pingMySQLDatabase(req)
+	case "postgres":
+		if createIfMissing {
+			if err := ensurePostgresDatabaseExists(req); err != nil {
+				return err
+			}
+		}
+		return pingPostgresDatabase(req)
+	default:
+		return fmt.Errorf("数据库类型必须是 sqlite、mysql 或 postgres")
 	}
+}
 
-	go func() { close(h.done) }()
-	return c.JSON(http.StatusOK, map[string]interface{}{"message": "install complete, starting server…"})
+func resolvePrimarySQLitePath(configDir, filename string) string {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return filepath.Join(configDir, "epusdt.db")
+	}
+	if filepath.IsAbs(filename) {
+		return filename
+	}
+	filename = strings.TrimPrefix(strings.TrimPrefix(filename, "/"), "\\")
+	return filepath.Join(configDir, filepath.FromSlash(filename))
+}
+
+var safeDatabaseIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func validateDatabaseIdentifier(name string) error {
+	if !safeDatabaseIdentifier.MatchString(name) {
+		return fmt.Errorf("数据库名 %q 含有不支持的字符", name)
+	}
+	return nil
+}
+
+func pingMySQLDatabase(req *InstallRequest) error {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		req.MySQLUser,
+		req.MySQLPasswd,
+		req.MySQLHost,
+		req.MySQLPort,
+		req.MySQLDatabase,
+	)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("MySQL 连接失败：%w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("MySQL 连接句柄获取失败：%w", err)
+	}
+	defer sqlDB.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("MySQL 连通性检测失败：%w", err)
+	}
+	return nil
+}
+
+func ensureMySQLDatabaseExists(req *InstallRequest) error {
+	if err := validateDatabaseIdentifier(req.MySQLDatabase); err != nil {
+		return err
+	}
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?charset=utf8mb4&parseTime=True&loc=Local",
+		req.MySQLUser,
+		req.MySQLPasswd,
+		req.MySQLHost,
+		req.MySQLPort,
+	)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("MySQL 连接失败：%w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("MySQL 连接句柄获取失败：%w", err)
+	}
+	defer sqlDB.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("MySQL 连通性检测失败：%w", err)
+	}
+	if err := db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", req.MySQLDatabase)).Error; err != nil {
+		return fmt.Errorf("MySQL 自动创建数据库失败：%w", err)
+	}
+	return nil
+}
+
+func pingPostgresDatabase(req *InstallRequest) error {
+	dsn := fmt.Sprintf("user=%s password=%s host=%s port=%s dbname=%s sslmode=disable TimeZone=Asia/Shanghai",
+		req.PostgresUser,
+		req.PostgresPasswd,
+		req.PostgresHost,
+		req.PostgresPort,
+		req.PostgresDatabase,
+	)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("PostgreSQL 连接失败：%w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("PostgreSQL 连接句柄获取失败：%w", err)
+	}
+	defer sqlDB.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("PostgreSQL 连通性检测失败：%w", err)
+	}
+	return nil
+}
+
+func ensurePostgresDatabaseExists(req *InstallRequest) error {
+	if err := validateDatabaseIdentifier(req.PostgresDatabase); err != nil {
+		return err
+	}
+	dsn := fmt.Sprintf("user=%s password=%s host=%s port=%s dbname=postgres sslmode=disable TimeZone=Asia/Shanghai",
+		req.PostgresUser,
+		req.PostgresPasswd,
+		req.PostgresHost,
+		req.PostgresPort,
+	)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("PostgreSQL 默认库连接失败：%w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("PostgreSQL 连接句柄获取失败：%w", err)
+	}
+	defer sqlDB.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("PostgreSQL 连通性检测失败：%w", err)
+	}
+	var exists bool
+	row := sqlDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", req.PostgresDatabase)
+	if err := row.Scan(&exists); err != nil {
+		return fmt.Errorf("PostgreSQL 检查数据库是否存在失败：%w", err)
+	}
+	if exists {
+		return nil
+	}
+	if err := db.Exec(fmt.Sprintf("CREATE DATABASE \"%s\"", req.PostgresDatabase)).Error; err != nil {
+		return fmt.Errorf("PostgreSQL 自动创建数据库失败：%w", err)
+	}
+	return nil
 }
 
 // RunInstallServer starts the install REST API on listenAddr (default :8000)
@@ -254,14 +615,36 @@ func RunInstallServer(listenAddr, envFilePath string) {
 // (or are set unconditionally by the template). Existing config values for
 // these keys must NOT be preserved — the form submission takes precedence.
 var formControlledKeys = map[string]bool{
-	"app_name":               true,
-	"app_uri":                true,
-	"http_listen":            true,
-	"runtime_root_path":      true,
-	"log_save_path":          true,
-	"order_expiration_time":  true,
-	"order_notice_max_retry": true,
-	"install":                true,
+	"app_name":                 true,
+	"app_uri":                  true,
+	"initial_admin_username":   true,
+	"initial_admin_password":   true,
+	"db_type":                  true,
+	"sqlite_database_filename": true,
+	"sqlite_table_prefix":      true,
+	"mysql_host":               true,
+	"mysql_port":               true,
+	"mysql_user":               true,
+	"mysql_passwd":             true,
+	"mysql_database":           true,
+	"mysql_table_prefix":       true,
+	"postgres_host":            true,
+	"postgres_port":            true,
+	"postgres_user":            true,
+	"postgres_passwd":          true,
+	"postgres_database":        true,
+	"postgres_table_prefix":    true,
+	"http_listen":              true,
+	"runtime_root_path":        true,
+	"log_save_path":            true,
+	"order_expiration_time":    true,
+	"order_notice_max_retry":   true,
+	"install":                  true,
+}
+
+var preserveBlankFormKeys = map[string]bool{
+	"mysql_passwd":    true,
+	"postgres_passwd": true,
 }
 
 // writeEnvFile renders and writes a minimal .env file.
@@ -282,7 +665,7 @@ func writeEnvFile(path string, r *InstallRequest) error {
 			if idx := strings.IndexByte(line, '='); idx >= 0 {
 				k := strings.TrimSpace(line[:idx])
 				v := strings.TrimSpace(line[idx+1:])
-				if v != "" && !formControlledKeys[k] {
+				if v != "" {
 					existingValues[k] = v
 				}
 			}
@@ -309,7 +692,8 @@ func writeEnvFile(path string, r *InstallRequest) error {
 		}
 		if idx := strings.IndexByte(trimmed, '='); idx >= 0 {
 			k := strings.TrimSpace(trimmed[:idx])
-			if existing, ok := existingValues[k]; ok {
+			renderedValue := strings.TrimSpace(trimmed[idx+1:])
+			if existing, ok := existingValues[k]; ok && (!formControlledKeys[k] || (preserveBlankFormKeys[k] && renderedValue == "")) {
 				lines[i] = k + "=" + existing
 			}
 		}
@@ -324,8 +708,41 @@ func writeEnvFile(path string, r *InstallRequest) error {
 	return err
 }
 
+func setInstallFlagAtPath(path string, enabled bool) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	targetValue := "false"
+	if enabled {
+		targetValue = "true"
+	}
+
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "install=") {
+			continue
+		}
+		lines[i] = "install=" + targetValue
+		found = true
+	}
+	if !found {
+		lines = append(lines, "install="+targetValue)
+	}
+
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
+}
+
 var envTemplate = template.Must(template.New("env").Parse(`app_name={{.AppName}}
 app_uri={{.AppURI}}
+initial_admin_username={{.InitialAdminUsername}}
+initial_admin_password={{.InitialAdminPassword}}
 log_level=info
 http_access_log=false
 sql_debug=false
@@ -340,11 +757,33 @@ log_max_age=7
 max_backups=3
 
 # supported values: postgres,mysql,sqlite
-db_type=sqlite
+db_type={{.DBType}}
 
 # sqlite primary database config
-sqlite_database_filename=
-sqlite_table_prefix=
+sqlite_database_filename={{.SQLiteDatabaseFilename}}
+sqlite_table_prefix={{.SQLiteTablePrefix}}
+
+# postgres config
+postgres_host={{.PostgresHost}}
+postgres_port={{.PostgresPort}}
+postgres_user={{.PostgresUser}}
+postgres_passwd={{.PostgresPasswd}}
+postgres_database={{.PostgresDatabase}}
+postgres_table_prefix={{.PostgresTablePrefix}}
+postgres_max_idle_conns=10
+postgres_max_open_conns=100
+postgres_max_life_time=6
+
+# mysql config
+mysql_host={{.MySQLHost}}
+mysql_port={{.MySQLPort}}
+mysql_user={{.MySQLUser}}
+mysql_passwd={{.MySQLPasswd}}
+mysql_database={{.MySQLDatabase}}
+mysql_table_prefix={{.MySQLTablePrefix}}
+mysql_max_idle_conns=10
+mysql_max_open_conns=100
+mysql_max_life_time=6
 
 # sqlite runtime store config
 runtime_sqlite_filename=epusdt-runtime.db

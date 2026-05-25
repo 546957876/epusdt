@@ -299,6 +299,7 @@ func TestAdminInitPasswordFlow(t *testing.T) {
 		PasswordHash: adminHash,
 		Status:       mdb.AdminUserStatusEnable,
 	})
+	_ = data.SetSetting(mdb.SettingGroupSystem, mdb.SettingKeyInitAdminUsername, testAdminUsername, mdb.SettingTypeString)
 	_ = data.SetSetting(mdb.SettingGroupSystem, mdb.SettingKeyInitAdminPasswordPlain, initPassword, mdb.SettingTypeString)
 	_ = data.SetSetting(mdb.SettingGroupSystem, mdb.SettingKeyInitAdminPasswordHash, data.HashInitialAdminPassword(initPassword), mdb.SettingTypeString)
 	_ = data.SetSetting(mdb.SettingGroupSystem, mdb.SettingKeyInitAdminPasswordFetched, "false", mdb.SettingTypeBool)

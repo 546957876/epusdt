@@ -5,6 +5,7 @@ import (
 
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/mdb"
+	"github.com/spf13/viper"
 )
 
 // DailyStat is one bucket of day-level aggregation used by the
@@ -57,8 +58,9 @@ func DailyOrderStats(start, end time.Time) ([]DailyStat, error) {
 // zero-filling any hours that have no orders.
 func HourlyOrderStats(start, end time.Time) ([]DailyStat, error) {
 	var rows []DailyStat
+	hourExpr := hourlyBucketExpr()
 	err := dao.Mdb.Model(&mdb.Orders{}).
-		Select(`strftime('%Y-%m-%d %H:00', created_at) AS day,
+		Select(hourExpr+` AS day,
             COUNT(*) AS order_count,
             SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS success_count,
             SUM(CASE WHEN status = ? THEN amount ELSE 0 END) AS total_amount,
@@ -66,7 +68,7 @@ func HourlyOrderStats(start, end time.Time) ([]DailyStat, error) {
 			mdb.StatusPaySuccess, mdb.StatusPaySuccess, mdb.StatusPaySuccess).
 		Where("created_at >= ?", start).
 		Where("created_at <= ?", end).
-		Group("strftime('%Y-%m-%d %H:00', created_at)").
+		Group(hourExpr).
 		Order("day ASC").
 		Scan(&rows).Error
 	if err != nil {
@@ -141,12 +143,13 @@ func DailyAssetByAddress(start, end time.Time) ([]AddressDailyStat, error) {
 // for the per-address stacked chart, zero-filling missing hours.
 func HourlyAssetByAddress(start, end time.Time) ([]AddressDailyStat, error) {
 	var rows []AddressDailyStat
+	hourExpr := hourlyBucketExpr()
 	err := dao.Mdb.Model(&mdb.Orders{}).
-		Select("strftime('%Y-%m-%d %H:00', created_at) AS day, receive_address AS address, SUM(actual_amount) AS actual_amount").
+		Select(hourExpr + " AS day, receive_address AS address, SUM(actual_amount) AS actual_amount").
 		Where("status = ?", mdb.StatusPaySuccess).
 		Where("created_at >= ?", start).
 		Where("created_at <= ?", end).
-		Group("strftime('%Y-%m-%d %H:00', created_at), receive_address").
+		Group(hourExpr + ", receive_address").
 		Order("day ASC").
 		Scan(&rows).Error
 	if err != nil {
@@ -316,4 +319,11 @@ func CountEnabledChains() (int64, error) {
 	var n int64
 	err := dao.Mdb.Model(&mdb.Chain{}).Where("enabled = ?", true).Count(&n).Error
 	return n, err
+}
+
+func hourlyBucketExpr() string {
+	if viper.GetString("db_type") == "postgres" {
+		return "to_char(date_trunc('hour', created_at), 'YYYY-MM-DD HH24:00')"
+	}
+	return "strftime('%Y-%m-%d %H:00', created_at)"
 }

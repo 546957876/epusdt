@@ -97,7 +97,7 @@ func (c *BaseAdminController) GetInitialPassword(ctx echo.Context) error {
 		return c.FailJson(ctx, err)
 	}
 	return c.SucJson(ctx, InitialPasswordResponse{
-		Username: "admin",
+		Username: data.GetInitialAdminUsername(),
 		Password: password,
 	})
 }

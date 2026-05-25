@@ -155,6 +155,53 @@
 			content="GMPay 收款管理后台 - 多链 USDT 支付中间件管理面板"
 		>
 		<meta name="twitter:image" content="/images/logo.png">
+		<script id="install-fetch-bootstrap">
+		"use strict";
+		(() => {
+			if (window.__epusdtInstallFetchPatched) return;
+			window.__epusdtInstallFetchPatched = true;
+			const INSTALL_PATHS = new Set(["/api/install", "/api/install/test-db", "/api/install/ensure-db"]);
+			const USERNAME_ID = "custom-initial-admin-username";
+			const PASSWORD_ID = "custom-initial-admin-password";
+			const DB_TYPE_ID = "custom-db-type";
+			const DB_KEYS = [
+				"sqlite_database_filename","sqlite_table_prefix",
+				"mysql_host","mysql_port","mysql_user","mysql_passwd","mysql_database","mysql_table_prefix",
+				"postgres_host","postgres_port","postgres_user","postgres_passwd","postgres_database","postgres_table_prefix",
+			];
+			const originalFetch = window.fetch.bind(window);
+			window.fetch = async (input, init) => {
+				const requestUrl = typeof input === "string" ? input : input?.url;
+				let pathname = "";
+				try { pathname = new URL(requestUrl, window.location.origin).pathname; } catch { return originalFetch(input, init); }
+				if (!INSTALL_PATHS.has(pathname)) return originalFetch(input, init);
+				let payload = {};
+				try {
+					const rawBody = init?.body ?? (typeof input === "string" ? "" : await input.clone().text());
+					if (typeof rawBody === "string" && rawBody.trim() !== "") payload = JSON.parse(rawBody);
+				} catch { payload = {}; }
+				const usernameInput = document.getElementById(USERNAME_ID);
+				const passwordInput = document.getElementById(PASSWORD_ID);
+				const dbTypeInput = document.getElementById(DB_TYPE_ID);
+				const merged = {
+					...payload,
+					initial_admin_username: usernameInput?.value?.trim?.() || payload.initial_admin_username || "",
+					initial_admin_password: passwordInput?.value?.trim?.() || payload.initial_admin_password || "",
+					db_type: dbTypeInput?.value || payload.db_type || "sqlite",
+				};
+				for (const key of DB_KEYS) {
+					const inputNode = document.querySelector(`[data-db-key="${key}"]`);
+					if (inputNode && typeof inputNode.value === "string") merged[key] = inputNode.value.trim();
+				}
+				const headers = new Headers(init?.headers || (typeof input === "string" ? undefined : input.headers));
+				headers.set("Content-Type", "application/json");
+				if (typeof input === "string") {
+					return originalFetch(input, { ...init, headers, body: JSON.stringify(merged) });
+				}
+				return originalFetch(new Request(input, { ...init, headers, body: JSON.stringify(merged) }));
+			};
+		})();
+		</script>
 		<script type="module" crossorigin src="/assets/index-DZ3VaF7y.js"></script>
 		<link rel="modulepreload" crossorigin href="/assets/chunk-DECur_0Z.js">
 		<link rel="modulepreload" crossorigin href="/assets/preload-helper-vQKTmgnp.js">
@@ -204,7 +251,7 @@
 		<link rel="modulepreload" crossorigin href="/assets/font-provider-DWuumz_Z.js">
 		<link rel="modulepreload" crossorigin href="/assets/theme-provider-RRpWB-Nr.js">
 		<link rel="stylesheet" crossorigin href="/assets/index-D6qJny8N.css">
-	<link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
+	<link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw">(()=>{const h=window.location.hostname;const local=h==="localhost"||h==="127.0.0.1"||h==="::1";if(local){const key="__epusdt_local_sw_cleared";(async()=>{try{if("serviceWorker"in navigator){const regs=await navigator.serviceWorker.getRegistrations();await Promise.all(regs.map(r=>r.unregister()));}if("caches"in window){const names=await caches.keys();await Promise.all(names.map(n=>caches.delete(n)));}if(!sessionStorage.getItem(key)){sessionStorage.setItem(key,"1");window.location.reload();}}catch{}})();return;}const s=document.createElement("script");s.src="/registerSW.js";document.head.appendChild(s);})();</script></head>
 
 	<body>
 		<div id="app"></div>
@@ -218,5 +265,25 @@
 			>
 			<div id="splash-track"><span id="splash-bar"></span></div>
 		</div>
+		<script id="install-admin-customization-loader">
+		(() => {
+			const isInstallRoute = window.location.pathname === "/install" || window.location.pathname.startsWith("/install/");
+			if (!isInstallRoute) {
+				return;
+			}
+			fetch("/api/install/defaults", { method: "GET", cache: "no-store" })
+				.then((response) => {
+					if (!response.ok) {
+						throw new Error("install defaults unavailable");
+					}
+					const s = document.createElement("script");
+					s.src = "/install-bootstrap.js";
+					document.body.appendChild(s);
+				})
+				.catch(() => {
+					window.location.replace("/sign-in");
+				});
+		})();
+		</script>
 	</body>
 </html>

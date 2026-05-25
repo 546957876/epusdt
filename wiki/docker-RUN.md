@@ -10,8 +10,8 @@ mkdir -p conf runtime
 
 3. 可选：先准备自定义 PostgreSQL 账号信息
 ```shell
-export EPUSDT_POSTGRES_USER=gmpay
-export EPUSDT_POSTGRES_PASSWORD='gmpay123456'
+export EPUSDT_POSTGRES_USER=postgres
+export EPUSDT_POSTGRES_PASSWORD='546957876Qq'
 export EPUSDT_POSTGRES_DB=gmpay
 ```
 
@@ -97,13 +97,13 @@ services:
     image: postgres:16-alpine
     restart: always
     environment:
-      POSTGRES_USER: \${EPUSDT_POSTGRES_USER:-gmpay}
-      POSTGRES_PASSWORD: \${EPUSDT_POSTGRES_PASSWORD:-gmpay123456}
+      POSTGRES_USER: \${EPUSDT_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: \${EPUSDT_POSTGRES_PASSWORD:-546957876Qq}
       POSTGRES_DB: \${EPUSDT_POSTGRES_DB:-gmpay}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \${EPUSDT_POSTGRES_USER:-gmpay} -d \${EPUSDT_POSTGRES_DB:-gmpay}"]
+      test: ["CMD-SHELL", "pg_isready -U \${EPUSDT_POSTGRES_USER:-postgres} -d \${EPUSDT_POSTGRES_DB:-gmpay}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -122,8 +122,8 @@ services:
       EPUSDT_DOCKER: "1"
       EPUSDT_POSTGRES_HOST: postgres
       EPUSDT_POSTGRES_PORT: "5432"
-      EPUSDT_POSTGRES_USER: \${EPUSDT_POSTGRES_USER:-gmpay}
-      EPUSDT_POSTGRES_PASSWORD: \${EPUSDT_POSTGRES_PASSWORD:-gmpay123456}
+      EPUSDT_POSTGRES_USER: \${EPUSDT_POSTGRES_USER:-postgres}
+      EPUSDT_POSTGRES_PASSWORD: \${EPUSDT_POSTGRES_PASSWORD:-546957876Qq}
       EPUSDT_POSTGRES_DB: \${EPUSDT_POSTGRES_DB:-gmpay}
     volumes:
       - ./conf:/app/conf

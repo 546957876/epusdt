@@ -73,8 +73,8 @@ func TestInstallDefaultsDockerOverrides(t *testing.T) {
 	}
 	_ = os.Setenv("EPUSDT_POSTGRES_HOST", "postgres")
 	_ = os.Setenv("EPUSDT_POSTGRES_PORT", "5432")
-	_ = os.Setenv("EPUSDT_POSTGRES_USER", "gmpay")
-	_ = os.Setenv("EPUSDT_POSTGRES_PASSWORD", "gmpay123456")
+	_ = os.Setenv("EPUSDT_POSTGRES_USER", "postgres")
+	_ = os.Setenv("EPUSDT_POSTGRES_PASSWORD", "546957876Qq")
 	_ = os.Setenv("EPUSDT_POSTGRES_DB", "gmpay")
 
 	d := InstallDefaults()
@@ -96,11 +96,11 @@ func TestInstallDefaultsDockerOverrides(t *testing.T) {
 	if d.PostgresPort != "5432" {
 		t.Errorf("PostgresPort = %q, want 5432", d.PostgresPort)
 	}
-	if d.PostgresUser != "gmpay" {
-		t.Errorf("PostgresUser = %q, want gmpay", d.PostgresUser)
+	if d.PostgresUser != "postgres" {
+		t.Errorf("PostgresUser = %q, want postgres", d.PostgresUser)
 	}
-	if d.PostgresPasswd != "gmpay123456" {
-		t.Errorf("PostgresPasswd = %q, want gmpay123456", d.PostgresPasswd)
+	if d.PostgresPasswd != "546957876Qq" {
+		t.Errorf("PostgresPasswd = %q, want 546957876Qq", d.PostgresPasswd)
 	}
 	if d.PostgresDatabase != "gmpay" {
 		t.Errorf("PostgresDatabase = %q, want gmpay", d.PostgresDatabase)
@@ -403,7 +403,7 @@ func TestNormalizeInstallRequestRejectsDockerLocalPostgresHost(t *testing.T) {
 		DBType:           "postgres",
 		PostgresHost:     "127.0.0.1",
 		PostgresPort:     "5432",
-		PostgresUser:     "gmpay",
+		PostgresUser:     "postgres",
 		PostgresDatabase: "gmpay",
 	}
 

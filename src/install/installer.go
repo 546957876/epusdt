@@ -125,8 +125,8 @@ func InstallDefaults() InstallRequest {
 		defaults.LogSavePath = "./logs"
 		defaults.PostgresHost = envOrDefault("EPUSDT_POSTGRES_HOST", "postgres")
 		defaults.PostgresPort = envOrDefault("EPUSDT_POSTGRES_PORT", "5432")
-		defaults.PostgresUser = envOrDefault("EPUSDT_POSTGRES_USER", "gmpay")
-		defaults.PostgresPasswd = envOrDefault("EPUSDT_POSTGRES_PASSWORD", "gmpay123456")
+		defaults.PostgresUser = envOrDefault("EPUSDT_POSTGRES_USER", "postgres")
+		defaults.PostgresPasswd = envOrDefault("EPUSDT_POSTGRES_PASSWORD", "546957876Qq")
 		defaults.PostgresDatabase = envOrDefault("EPUSDT_POSTGRES_DB", "gmpay")
 	}
 	return defaults

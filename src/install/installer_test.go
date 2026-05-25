@@ -29,6 +29,31 @@ func TestInstallDefaults(t *testing.T) {
 	}
 }
 
+func TestInstallDefaultsDockerOverrides(t *testing.T) {
+	oldDocker := os.Getenv("EPUSDT_DOCKER")
+	defer func() {
+		if oldDocker == "" {
+			_ = os.Unsetenv("EPUSDT_DOCKER")
+		} else {
+			_ = os.Setenv("EPUSDT_DOCKER", oldDocker)
+		}
+	}()
+	if err := os.Setenv("EPUSDT_DOCKER", "1"); err != nil {
+		t.Fatalf("set EPUSDT_DOCKER: %v", err)
+	}
+
+	d := InstallDefaults()
+	if d.HttpBindAddr != "0.0.0.0" {
+		t.Errorf("HttpBindAddr = %q, want 0.0.0.0", d.HttpBindAddr)
+	}
+	if d.RuntimeRootPath != "/app/runtime" {
+		t.Errorf("RuntimeRootPath = %q, want /app/runtime", d.RuntimeRootPath)
+	}
+	if d.LogSavePath != "./logs" {
+		t.Errorf("LogSavePath = %q, want ./logs", d.LogSavePath)
+	}
+}
+
 func TestWriteEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")

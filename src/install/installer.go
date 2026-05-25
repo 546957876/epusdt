@@ -91,7 +91,7 @@ type InstallRequest struct {
 
 // InstallDefaults returns sensible default values for the install form.
 func InstallDefaults() InstallRequest {
-	return InstallRequest{
+	defaults := InstallRequest{
 		AppName:                "epusdt",
 		AppURI:                 "",
 		InitialAdminUsername:   "admin",
@@ -118,6 +118,12 @@ func InstallDefaults() InstallRequest {
 		OrderExpirationTime:    10,
 		OrderNoticeMaxRetry:    1,
 	}
+	if strings.TrimSpace(os.Getenv("EPUSDT_DOCKER")) != "" {
+		defaults.HttpBindAddr = "0.0.0.0"
+		defaults.RuntimeRootPath = "/app/runtime"
+		defaults.LogSavePath = "./logs"
+	}
+	return defaults
 }
 
 // installHandler holds the per-invocation state shared between handlers.

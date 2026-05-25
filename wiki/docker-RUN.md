@@ -1,9 +1,14 @@
-1. 创建和进去这个目录
+1. 创建和进入部署目录
 ```shell
 mkdir epusdt && cd epusdt
 ```
 
-2. 把配置文件放进去这个目录，只需要改
+2. 创建配置和运行时目录
+```shell
+mkdir -p conf runtime
+```
+
+3. 把配置文件放到 `conf/.env`
 
 app_url
 
@@ -12,18 +17,18 @@ tron_grid_api_key
 api_rate_url
 
 ```shell
-cat <<EOF > env
+cat <<EOF > conf/.env
 app_name=epusdt
 app_uri=https://dujiaoka.com
 log_level=info
 http_access_log=false
 sql_debug=false
-http_listen=:8000
+http_listen=0.0.0.0:8000
 
 static_path=/static
-runtime_root_path=/runtime
+runtime_root_path=/app/runtime
 
-log_save_path=/logs
+log_save_path=./logs
 log_max_size=32
 log_max_age=7
 max_backups=3
@@ -77,7 +82,7 @@ api_rate_url=https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/cu
 tron_grid_api_key=
 EOF
 ```
-3. docker compose 创建
+4. docker compose 创建
 ```shell
 cat <<EOF > docker-compose.yaml
 services:
@@ -87,16 +92,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    environment:
+      EPUSDT_CONFIG: /app/conf/.env
+      EPUSDT_DOCKER: "1"
     volumes:
-      - ./env:/app/.env
+      - ./conf:/app/conf
+      - ./runtime:/app/runtime
     ports:
       - "8000:8000"
 EOF
 ```
-4. 运行
+5. 运行
 ```shell
 docker compose up -d
 ```
-5. 配置独角兽后台
+6. 配置独角兽后台
 
 商户密钥： http://your_domain/payments/epusdt/v1/order/create-transaction

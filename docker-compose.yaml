@@ -5,7 +5,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    environment:
+      EPUSDT_CONFIG: /app/conf/.env
+      EPUSDT_DOCKER: "1"
     volumes:
-      - ./env:/app/.env
+      - ./conf:/app/conf
+      - ./runtime:/app/runtime
     ports:
       - "8000:8000"

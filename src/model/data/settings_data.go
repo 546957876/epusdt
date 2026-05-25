@@ -274,10 +274,18 @@ func GetOkPayAllowTokens() []string {
 // excluding any keys in sensitiveSettingKeys.
 func ListSettingsByGroup(group string) ([]mdb.Setting, error) {
 	var rows []mdb.Setting
-	tx := dao.Mdb.Model(&mdb.Setting{}).Not("`key`", sensitiveSettingKeys)
+	tx := dao.Mdb.Model(&mdb.Setting{}).Not(clause.IN{Column: clause.Column{Name: "key"}, Values: toInterfaceSlice(sensitiveSettingKeys)})
 	if group != "" {
-		tx = tx.Where("`group` = ?", group)
+		tx = tx.Where(clause.Eq{Column: clause.Column{Name: "group"}, Value: group})
 	}
-	err := tx.Order("`key` ASC").Find(&rows).Error
+	err := tx.Order(clause.OrderByColumn{Column: clause.Column{Name: "key"}}).Find(&rows).Error
 	return rows, err
+}
+
+func toInterfaceSlice(items []string) []interface{} {
+	values := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		values = append(values, item)
+	}
+	return values
 }

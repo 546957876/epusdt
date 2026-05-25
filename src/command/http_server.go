@@ -63,6 +63,7 @@ func HttpServerStart() {
 	MiddlewareRegister(e)
 	route.RegisterRoute(e)
 	e.Static(config.StaticPath, config.StaticFilePath)
+	e.Use(redirectInstallRouteMiddleware)
 
 	// Resolve www/ relative to the executable so SPA routes work regardless
 	// of the working directory. main.go extracts www/ next to the binary.
@@ -102,6 +103,22 @@ func HttpServerStart() {
 	defer cancel()
 	if err = e.Shutdown(ctx); err != nil {
 		e.Logger.Fatal(err)
+	}
+}
+
+func redirectInstallRouteMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		req := c.Request()
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
+			return next(c)
+		}
+
+		path := req.URL.Path
+		if path == "/install" || strings.HasPrefix(path, "/install/") {
+			return c.Redirect(http.StatusFound, "/sign-in")
+		}
+
+		return next(c)
 	}
 }
 

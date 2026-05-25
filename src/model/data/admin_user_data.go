@@ -17,7 +17,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const defaultAdminUsername = "admin"
 const InitialAdminPasswordHashAlgorithm = "sha256"
 
 var (
@@ -36,44 +35,48 @@ type InitialAdminPasswordHashInfo struct {
 }
 
 // EnsureDefaultAdmin seeds an initial admin account when no admin user
-// exists. The password is randomly generated and returned so the caller
-// can print it to the console. Idempotent — subsequent calls return
-// ("", false, nil).
-func EnsureDefaultAdmin() (password string, created bool, err error) {
+// exists. The caller may provide a preferred username/password; empty values
+// fall back to the legacy defaults. Idempotent — subsequent calls return
+// ("", "", false, nil).
+func EnsureDefaultAdmin(preferredUsername, preferredPassword string) (username string, password string, created bool, err error) {
 	if err := purgeDeletedInitialAdminPasswordPlain(); err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	var count int64
 	if err := dao.Mdb.Model(&mdb.AdminUser{}).Count(&count).Error; err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	if count > 0 {
-		return "", false, nil
+		return "", "", false, nil
 	}
-	password = randomAdminPassword()
+	username = normalizeInitialAdminUsername(preferredUsername)
+	password = normalizeInitialAdminPassword(preferredPassword)
 	hash, err := HashPassword(password)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	user := &mdb.AdminUser{
-		Username:     defaultAdminUsername,
+		Username:     username,
 		PasswordHash: hash,
 		Status:       mdb.AdminUserStatusEnable,
 	}
 	if err := dao.Mdb.Create(user).Error; err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
-	if err := initAdminPasswordState(password); err != nil {
+	if err := initAdminPasswordState(username, password); err != nil {
 		// Account was already created; surface both for visibility while
 		// preserving created=true and password for emergency fallback.
-		return password, true, err
+		return username, password, true, err
 	}
-	return password, true, nil
+	return username, password, true, nil
 }
 
 func purgeDeletedInitialAdminPasswordPlain() error {
 	return dao.Mdb.Unscoped().
-		Where("`key` = ? AND deleted_at IS NOT NULL", mdb.SettingKeyInitAdminPasswordPlain).
+		Where(clause.And(
+			clause.Eq{Column: clause.Column{Name: "key"}, Value: mdb.SettingKeyInitAdminPasswordPlain},
+			clause.Expr{SQL: "deleted_at IS NOT NULL"},
+		)).
 		Delete(&mdb.Setting{}).Error
 }
 
@@ -83,6 +86,22 @@ func randomAdminPassword() string {
 	return hex.EncodeToString(b)
 }
 
+func normalizeInitialAdminUsername(input string) string {
+	username := strings.ToLower(strings.TrimSpace(input))
+	if username == "" {
+		return "admin"
+	}
+	return username
+}
+
+func normalizeInitialAdminPassword(input string) string {
+	password := strings.TrimSpace(input)
+	if password == "" {
+		return randomAdminPassword()
+	}
+	return password
+}
+
 // HashInitialAdminPassword fingerprints the initial plaintext password so
 // the frontend can compare user input locally without exposing plaintext.
 func HashInitialAdminPassword(plain string) string {
@@ -90,9 +109,14 @@ func HashInitialAdminPassword(plain string) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
-func initAdminPasswordState(plain string) error {
+func initAdminPasswordState(username, plain string) error {
 	hash := HashInitialAdminPassword(plain)
 	settings := []mdb.Setting{
+		{
+			Group: mdb.SettingGroupSystem, Key: mdb.SettingKeyInitAdminUsername,
+			Value: username, Type: mdb.SettingTypeString,
+			Description: "Initial admin username",
+		},
 		{
 			Group: mdb.SettingGroupSystem, Key: mdb.SettingKeyInitAdminPasswordPlain,
 			Value: plain, Type: mdb.SettingTypeString,
@@ -121,6 +145,7 @@ func initAdminPasswordState(plain string) error {
 	}
 	// Keep in-process cache coherent for the current process.
 	settingsCacheMu.Lock()
+	settingsCache[mdb.SettingKeyInitAdminUsername] = username
 	settingsCache[mdb.SettingKeyInitAdminPasswordPlain] = plain
 	settingsCache[mdb.SettingKeyInitAdminPasswordHash] = hash
 	settingsCache[mdb.SettingKeyInitAdminPasswordFetched] = "false"
@@ -146,7 +171,7 @@ func ConsumeInitialAdminPassword() (string, error) {
 	err := dao.Mdb.Transaction(func(tx *gorm.DB) error {
 		row := new(mdb.Setting)
 		if err := tx.Model(&mdb.Setting{}).
-			Where("`key` = ?", mdb.SettingKeyInitAdminPasswordPlain).
+			Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: mdb.SettingKeyInitAdminPasswordPlain}).
 			Limit(1).
 			Find(row).Error; err != nil {
 			return err
@@ -154,7 +179,7 @@ func ConsumeInitialAdminPassword() (string, error) {
 		if row.ID == 0 || row.Value == "" {
 			var fetched mdb.Setting
 			if err := tx.Model(&mdb.Setting{}).
-				Where("`key` = ?", mdb.SettingKeyInitAdminPasswordFetched).
+				Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: mdb.SettingKeyInitAdminPasswordFetched}).
 				Limit(1).
 				Find(&fetched).Error; err != nil {
 				return err
@@ -165,7 +190,9 @@ func ConsumeInitialAdminPassword() (string, error) {
 			return ErrInitAdminPasswordUnavailable
 		}
 		password = row.Value
-		res := tx.Unscoped().Where("`key` = ?", mdb.SettingKeyInitAdminPasswordPlain).Delete(&mdb.Setting{})
+		res := tx.Unscoped().
+			Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: mdb.SettingKeyInitAdminPasswordPlain}).
+			Delete(&mdb.Setting{})
 		if res.Error != nil {
 			return res.Error
 		}
@@ -208,6 +235,14 @@ func GetInitialAdminPasswordHashInfo() (*InitialAdminPasswordHashInfo, error) {
 		PasswordChanged: GetSettingBool(mdb.SettingKeyInitAdminPasswordChanged, false),
 		Available:       true,
 	}, nil
+}
+
+func GetInitialAdminUsername() string {
+	username := strings.TrimSpace(GetSettingString(mdb.SettingKeyInitAdminUsername, ""))
+	if username == "" {
+		return "admin"
+	}
+	return username
 }
 
 // IsUsingInitialAdminPassword reports whether the current admin password is
@@ -268,7 +303,7 @@ func UpdateAdminUserPassword(id uint64, newPlain string) error {
 		// that case to keep password updates backward compatible.
 		var initHashRow mdb.Setting
 		if err := tx.Model(&mdb.Setting{}).
-			Where("`key` = ?", mdb.SettingKeyInitAdminPasswordHash).
+			Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: mdb.SettingKeyInitAdminPasswordHash}).
 			Limit(1).
 			Find(&initHashRow).Error; err != nil {
 			return err

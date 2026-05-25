@@ -47,7 +47,7 @@ func TestConsumeInitialAdminPasswordHardDeletesPlaintext(t *testing.T) {
 	defer cleanup()
 
 	const password = "init-pass-plain"
-	if err := initAdminPasswordState(password); err != nil {
+	if err := initAdminPasswordState("owner", password); err != nil {
 		t.Fatalf("seed initial password state: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestEnsureDefaultAdminPurgesLegacySoftDeletedPlaintext(t *testing.T) {
 		t.Fatalf("hash password: %v", err)
 	}
 	if err := dao.Mdb.Create(&mdb.AdminUser{
-		Username:     defaultAdminUsername,
+		Username:     "admin",
 		PasswordHash: hash,
 		Status:       mdb.AdminUserStatusEnable,
 	}).Error; err != nil {
@@ -101,12 +101,12 @@ func TestEnsureDefaultAdminPurgesLegacySoftDeletedPlaintext(t *testing.T) {
 		t.Fatalf("soft delete plaintext setting: %v", err)
 	}
 
-	password, created, err := EnsureDefaultAdmin()
+	username, password, created, err := EnsureDefaultAdmin("", "")
 	if err != nil {
 		t.Fatalf("ensure default admin: %v", err)
 	}
-	if created || password != "" {
-		t.Fatalf("created=%v password=%q, want existing admin unchanged", created, password)
+	if created || username != "" || password != "" {
+		t.Fatalf("created=%v username=%q password=%q, want existing admin unchanged", created, username, password)
 	}
 
 	var count int64
@@ -118,5 +118,38 @@ func TestEnsureDefaultAdminPurgesLegacySoftDeletedPlaintext(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("legacy plaintext rows after ensure = %d, want 0", count)
+	}
+}
+
+func TestEnsureDefaultAdminUsesCustomCredentials(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+
+	username, password, created, err := EnsureDefaultAdmin("owner", "Secret123")
+	if err != nil {
+		t.Fatalf("ensure default admin: %v", err)
+	}
+	if !created {
+		t.Fatal("expected admin to be created")
+	}
+	if username != "owner" {
+		t.Fatalf("username = %q, want owner", username)
+	}
+	if password != "Secret123" {
+		t.Fatalf("password = %q, want Secret123", password)
+	}
+
+	user, err := GetAdminUserByUsername("owner")
+	if err != nil {
+		t.Fatalf("load admin user: %v", err)
+	}
+	if user.ID == 0 {
+		t.Fatal("expected created admin user")
+	}
+	if !VerifyPassword(user.PasswordHash, "Secret123") {
+		t.Fatal("expected stored password hash to match custom password")
+	}
+	if got := GetInitialAdminUsername(); got != "owner" {
+		t.Fatalf("GetInitialAdminUsername = %q, want owner", got)
 	}
 }

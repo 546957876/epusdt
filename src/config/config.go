@@ -314,6 +314,81 @@ func GetAppUri() string {
 	return viper.GetString("app_uri")
 }
 
+func GetInitialAdminUsername() string {
+	return strings.TrimSpace(viper.GetString("initial_admin_username"))
+}
+
+func GetInitialAdminPassword() string {
+	return strings.TrimSpace(viper.GetString("initial_admin_password"))
+}
+
+func ClearInitialAdminPassword() error {
+	configPath, err := resolveConfigFilePath()
+	if err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "initial_admin_password=") {
+			continue
+		}
+		lines[i] = "initial_admin_password="
+		found = true
+	}
+	if !found {
+		return nil
+	}
+
+	return os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0o600)
+}
+
+func SetInstallFlag(enabled bool) error {
+	configPath, err := resolveConfigFilePath()
+	if err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	targetValue := "false"
+	if enabled {
+		targetValue = "true"
+	}
+
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "install=") {
+			continue
+		}
+		lines[i] = "install=" + targetValue
+		found = true
+	}
+	if !found {
+		lines = append(lines, "install="+targetValue)
+	}
+
+	return os.WriteFile(configPath, []byte(strings.Join(lines, "\n")), 0o600)
+}
+
 func GetRateApiUrl() string {
 	// settings table wins (admin-configurable); .env and env var remain
 	// as fallbacks for smooth migration from the old layout.

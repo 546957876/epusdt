@@ -257,7 +257,7 @@ func (h *installHandler) TestDBConnection(c echo.Context) error {
 	if err := c.Bind(req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 	}
-	if err := normalizeInstallRequest(req, false); err != nil {
+	if err := normalizeInstallRequest(req, false, false); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 	}
 	if err := preparePrimaryDatabase(req, filepath.Dir(h.envFilePath), false); err != nil {
@@ -273,7 +273,7 @@ func (h *installHandler) EnsureDatabase(c echo.Context) error {
 	if err := c.Bind(req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 	}
-	if err := normalizeInstallRequest(req, false); err != nil {
+	if err := normalizeInstallRequest(req, false, false); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 	}
 	if err := preparePrimaryDatabase(req, filepath.Dir(h.envFilePath), req.CreateDatabaseIfMissing); err != nil {
@@ -312,7 +312,7 @@ func (h *installHandler) Submit(c echo.Context) error {
 	if err := c.Bind(req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 	}
-	if err := normalizeInstallRequest(req, true); err != nil {
+	if err := normalizeInstallRequest(req, true, true); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 	}
 	if err := preparePrimaryDatabase(req, filepath.Dir(h.envFilePath), true); err != nil {
@@ -336,7 +336,7 @@ func (h *installHandler) Submit(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{"message": "install complete, starting server…"})
 }
 
-func normalizeInstallRequest(req *InstallRequest, requireAppURI bool) error {
+func normalizeInstallRequest(req *InstallRequest, requireAppURI bool, requireInitialAdminPassword bool) error {
 	d := InstallDefaults()
 	req.AppURI = strings.TrimSpace(req.AppURI)
 	if requireAppURI && req.AppURI == "" {
@@ -353,6 +353,9 @@ func normalizeInstallRequest(req *InstallRequest, requireAppURI bool) error {
 		return fmt.Errorf("初始管理员账号不能包含空格")
 	}
 	req.InitialAdminPassword = strings.TrimSpace(req.InitialAdminPassword)
+	if requireInitialAdminPassword && req.InitialAdminPassword == "" {
+		return fmt.Errorf("初始管理员密码不能为空")
+	}
 	if req.InitialAdminPassword != "" && len(req.InitialAdminPassword) < 6 {
 		return fmt.Errorf("初始管理员密码至少需要 6 个字符")
 	}

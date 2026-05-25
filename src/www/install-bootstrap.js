@@ -72,15 +72,15 @@
 					<span class="text-muted-foreground text-xs">首次登录后台时使用这个账号。</span>
 				</label>
 				<label class="grid gap-2">
-					<span class="font-medium text-sm">初始管理员密码</span>
+					<span class="font-medium text-sm">初始管理员密码 *</span>
 					<input
 						id="${PASSWORD_ID}"
 						class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-						placeholder="留空则自动生成"
+						placeholder="请输入管理员密码"
 						type="password"
 						autocomplete="new-password"
 					>
-					<span class="text-muted-foreground text-xs">留空后由系统自动生成随机密码。</span>
+					<span class="text-muted-foreground text-xs">首次登录后台时使用这个密码，长度至少 6 个字符。</span>
 				</label>
 			</div>
 			<div class="grid gap-2">

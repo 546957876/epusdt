@@ -401,17 +401,35 @@ func TestNormalizeInstallRequestRejectsDockerLocalPostgresHost(t *testing.T) {
 	req := &InstallRequest{
 		AppURI:           "http://example.com",
 		DBType:           "postgres",
+		InitialAdminUsername: "admin",
+		InitialAdminPassword: "Secret123",
 		PostgresHost:     "127.0.0.1",
 		PostgresPort:     "5432",
 		PostgresUser:     "postgres",
 		PostgresDatabase: "gmpay",
 	}
 
-	err := normalizeInstallRequest(req, true)
+	err := normalizeInstallRequest(req, true, true)
 	if err == nil {
 		t.Fatal("expected docker-local postgres host validation error")
 	}
 	if !strings.Contains(err.Error(), "Compose 服务名 postgres") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNormalizeInstallRequestRequiresInitialAdminPasswordOnSubmit(t *testing.T) {
+	req := &InstallRequest{
+		AppURI:               "http://example.com",
+		InitialAdminUsername: "admin",
+		DBType:               "sqlite",
+	}
+
+	err := normalizeInstallRequest(req, true, true)
+	if err == nil {
+		t.Fatal("expected missing initial admin password validation error")
+	}
+	if !strings.Contains(err.Error(), "初始管理员密码不能为空") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
